@@ -1,6 +1,5 @@
 """Scrapy items for novel data extraction."""
 import scrapy
-from typing import List, Optional
 
 
 class ChapterItem(scrapy.Item):
@@ -9,6 +8,8 @@ class ChapterItem(scrapy.Item):
     chapter_title = scrapy.Field()
     chapter_url = scrapy.Field()
     content = scrapy.Field()  # Raw HTML content
+    clean_content = scrapy.Field()  # optional, for pipeline
+    word_count = scrapy.Field()  # optional, for pipeline
 
 
 class NovelItem(scrapy.Item):

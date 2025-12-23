@@ -1,6 +1,7 @@
 # Novel Ingestion Backend
 
-A Python-based backend system for crawling, ingesting, and serving web novels. Built with FastAPI, Scrapy, and PostgreSQL.
+A Python-based backend system for crawling, ingesting, and serving web novels. Built with FastAPI, Scrapy, and
+PostgreSQL.
 
 ## Features
 
@@ -17,13 +18,19 @@ A Python-based backend system for crawling, ingesting, and serving web novels. B
 
 ```
 ┌─────────────────┐
-│   FastAPI       │  POST /ingest → Create job
+│   FastAPI       │  POST /ingest → Create job + enqueue to Redis
 │   (API Layer)   │  GET /novels → Read data
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ Ingestion Queue │  Manage crawl jobs
+│  Redis Queue    │  Background job queue (RQ)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   RQ Worker     │  Pop jobs, execute Scrapy
+│   (worker.py)   │  Update job status
 └────────┬────────┘
          │
          ▼
@@ -44,7 +51,9 @@ A Python-based backend system for crawling, ingesting, and serving web novels. B
 └─────────────────┘
 ```
 
-## Technology Stack
+## TRedis + RQ** - Background job queue
+
+- **echnology Stack
 
 - **Python 3.11+**
 - **FastAPI** - Modern async web framework
@@ -59,13 +68,18 @@ A Python-based backend system for crawling, ingesting, and serving web novels. B
 
 ```
 novel-ingestion/
-├── main.py                 # FastAPI application
+├── worker.py              # RQ worker for background jobs
 ├── config.py              # Application configuration
 ├── database.py            # Database setup and sessions
 ├── models.py              # SQLAlchemy models
 ├── schemas.py             # Pydantic schemas
 ├── normalizer.py          # Content cleaning and normalization
-├── ingestion_queue.py     # Job queue and crawler management
+├── ingestion_queue.py     # Redis job queue and crawler management
+├── cli.py                 # CLI utilities
+├── setup.py               # Setup script
+├── requirements.txt       # Python dependencies
+├── README.md              # Main documentation
+├── REDIS_SETUP.md        # Redis setup and deployment guideer management
 ├── requirements.txt       # Python dependencies
 ├── alembic.ini           # Alembic configuration
 ├── alembic/              # Database migrations
@@ -95,7 +109,22 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment
+### 2. Install and Start Redis
+
+```bash
+# Ubuntu/Debian
+sudo apt install redis-server
+sudo systemctl start redis
+
+# macOS
+brew install redis
+brew services start redis
+
+# Docker
+docker run -d -p 6379:6379 redis:7-alpine
+```
+
+### 3. Configure Environment
 
 ```bash
 # Copy example environment file
@@ -106,17 +135,27 @@ nano .env
 ```
 
 **Required settings:**
+
 - `DATABASE_URL` - PostgreSQL connection string
 - `DATABASE_URL_SYNC` - Sync version for Alembic/Scrapy
 
-### 3. Initialize Database
+### 4. Initialize Database
 
 ```bash
 # Run migrations to create tables
 alembic upgrade head
 ```
 
-### 4. Start the API Server
+### 5. Start Background Workers
+
+```bash
+# Start one or more workers (in separate terminals)
+python worker.py
+```
+
+Workers process ingestion jobs from Redis queue.
+
+### 6. Start the API Server
 
 ```bash
 # Development mode with auto-reload
@@ -130,6 +169,8 @@ API will be available at: `http://localhost:8000`
 
 Interactive docs at: `http://localhost:8000/docs`
 
+**Important:** Workers must be running to process ingestion jobs!
+
 ## Usage
 
 ### Ingest a Novel
@@ -140,7 +181,8 @@ curl -X POST "http://localhost:8000/ingest" \
   -d '{"url": "https://www.royalroad.com/fiction/12345"}'
 ```
 
-Response:
+Response (immediate, non-blocking):
+
 ```json
 {
   "job_id": 1,
@@ -148,6 +190,8 @@ Response:
   "message": "Ingestion job created and queued"
 }
 ```
+
+The job is queued in Redis and processed by background workers.
 
 ### Check Job Status
 
@@ -291,6 +335,7 @@ Genres are first-class entities:
 - **Many-to-many** relationship with novels
 
 Example genre mappings:
+
 - "Fantasy" → `fantasy`
 - "Sci-Fi", "Science Fiction" → `science-fiction`
 - "Slice of Life" → `slice-of-life`
@@ -299,32 +344,32 @@ Example genre mappings:
 
 ### Ingestion
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/ingest` | Create ingestion job |
-| GET | `/jobs/{job_id}` | Get job status |
+| Method | Endpoint         | Description          |
+|--------|------------------|----------------------|
+| POST   | `/ingest`        | Create ingestion job |
+| GET    | `/jobs/{job_id}` | Get job status       |
 
 ### Novels
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/novels` | List novels (paginated) |
-| GET | `/novels/{slug}` | Get novel details |
+| Method | Endpoint         | Description             |
+|--------|------------------|-------------------------|
+| GET    | `/novels`        | List novels (paginated) |
+| GET    | `/novels/{slug}` | Get novel details       |
 
 ### Chapters
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/novels/{slug}/chapters` | List chapters (paginated) |
-| GET | `/novels/{slug}/chapters/{number}` | Get chapter content |
+| Method | Endpoint                           | Description               |
+|--------|------------------------------------|---------------------------|
+| GET    | `/novels/{slug}/chapters`          | List chapters (paginated) |
+| GET    | `/novels/{slug}/chapters/{number}` | Get chapter content       |
 
 ### Genres
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/genres` | List all genres |
-| GET | `/genres/{slug}` | Get genre details |
-| GET | `/genres/{slug}/novels` | List novels by genre |
+| Method | Endpoint                | Description          |
+|--------|-------------------------|----------------------|
+| GET    | `/genres`               | List all genres      |
+| GET    | `/genres/{slug}`        | Get genre details    |
+| GET    | `/genres/{slug}/novels` | List novels by genre |
 
 ## Configuration
 
@@ -398,11 +443,38 @@ flake8 .
 
 ### Background Job Queue
 
-For production, replace synchronous job processing with:
+**Redis + RQ** is now used for all job processing:
 
-- **Redis + RQ** - Simple Python job queue
-- **Celery** - Distributed task queue
-- **Cloud services** - AWS SQS, Google Cloud Tasks
+- **Non-blocking API** - Returns immediately after enqueueing
+- **Parallel workers** - Run multiple workers for throughput
+- **Fault tolerance** - Jobs survive crashes and restarts
+- **Monitoring** - Built-in RQ tools
+
+See [REDIS_SETUP.md](docs/REDIS_SETUP.md) for detailed deployment guide.
+
+### Running Workers
+
+**Development (single worker):**
+
+```bash
+python worker.py
+```
+
+**Production (multiple workers with supervisor):**
+
+```ini
+[program:novel-worker]
+command=/path/to/venv/bin/python worker.py
+numprocs=3
+autostart=true
+autorestart=true
+```
+
+**Production (systemd):**
+
+```bash
+sudo systemctl start novel-worker@{1..3}
+```
 
 ### Scaling
 

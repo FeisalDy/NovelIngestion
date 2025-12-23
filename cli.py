@@ -12,7 +12,7 @@ import argparse
 import sys
 from database import SessionLocal
 from models import IngestionJob, Novel, Genre, IngestionStatus
-from ingestion_queue import SpiderRegistry, CrawlerRunner, IngestionQueue
+from ingestion_queue import SpiderRegistry, IngestionQueue
 from config import settings
 
 
@@ -40,17 +40,15 @@ def cmd_ingest(args):
         
         print(f"Created job {job.id} for {url}")
         
-        # Process immediately if requested
-        if args.immediate:
-            print("Processing job...")
-            crawler_runner = CrawlerRunner(settings.scrapy_project_path)
-            queue = IngestionQueue(crawler_runner)
-            success = queue.enqueue_job(job.id)
-            
-            if success:
-                print("✓ Job completed successfully")
-            else:
-                print("✗ Job failed")
+        # Enqueue to Redis
+        queue = IngestionQueue()
+        success = queue.enqueue_job(job.id)
+        
+        if success:
+            print(f"✓ Job {job.id} enqueued to Redis")
+            print("Worker will process this job in the background")
+        else:
+            print(f"✗ Failed to enqueue job {job.id}")
         
     finally:
         db.close()
@@ -123,15 +121,13 @@ def cmd_list_genres(args):
 
 
 def cmd_process_queue(args):
-    """Process all queued jobs."""
-    print("Processing queued jobs...")
+    """Enqueue all queued jobs to Redis."""
+    print("Enqueueing all QUEUED jobs to Redis...")
     
-    crawler_runner = CrawlerRunner(settings.scrapy_project_path)
-    queue = IngestionQueue(crawler_runner)
-    
+    queue = IngestionQueue()
     queue.process_queued_jobs()
     
-    print("Queue processing complete")
+    print("✓ Queue processing complete")
 
 
 def main():
@@ -145,11 +141,6 @@ def main():
     # Ingest command
     ingest_parser = subparsers.add_parser("ingest", help="Ingest a novel from URL")
     ingest_parser.add_argument("url", help="Novel URL to ingest")
-    ingest_parser.add_argument(
-        "--immediate",
-        action="store_true",
-        help="Process job immediately (don't queue)"
-    )
     ingest_parser.set_defaults(func=cmd_ingest)
     
     # List jobs command
@@ -184,7 +175,7 @@ def main():
     process_queue_parser.set_defaults(func=cmd_process_queue)
     
     # Parse arguments
-    args = parser.parse_args()
+    args = parEnqueue all QUEUED jobs to Redi
     
     if not args.command:
         parser.print_help()

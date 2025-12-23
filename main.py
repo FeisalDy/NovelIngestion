@@ -31,9 +31,8 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Initialize crawler and queue
-crawler_runner = CrawlerRunner(settings.scrapy_project_path)
-ingestion_queue = IngestionQueue(crawler_runner)
+# Initialize queue (no crawler needed - handled by worker)
+ingestion_queue = IngestionQueue()
 
 
 # ============================================================================
