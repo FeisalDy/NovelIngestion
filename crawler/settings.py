@@ -8,11 +8,11 @@ NEWSPIDER_MODULE = "crawler.spiders"
 ROBOTSTXT_OBEY = True
 
 # Configure maximum concurrent requests
-CONCURRENT_REQUESTS = 4
-CONCURRENT_REQUESTS_PER_DOMAIN = 1
+CONCURRENT_REQUESTS = 16
+CONCURRENT_REQUESTS_PER_DOMAIN = 4
 
 # Configure a delay for requests
-DOWNLOAD_DELAY = 1
+DOWNLOAD_DELAY = 2
 RANDOMIZE_DOWNLOAD_DELAY = True
 
 # Disable cookies
