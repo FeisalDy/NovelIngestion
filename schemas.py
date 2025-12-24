@@ -78,8 +78,12 @@ class ChapterListItem(BaseModel):
     id: int
     chapter_number: int
     title: str
+    slug: Optional[str] = None
     word_count: int
+    is_one_shot: bool = False
+    novel_id: Optional[int] = None
     created_at: datetime
+    genres: List[GenreSchema] = []
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -87,12 +91,16 @@ class ChapterListItem(BaseModel):
 class ChapterDetail(BaseModel):
     """Detailed chapter information with content."""
     id: int
-    novel_id: int
+    novel_id: Optional[int] = None
     chapter_number: int
     title: str
+    slug: Optional[str] = None
     content: str
     word_count: int
+    is_one_shot: bool = False
+    source_url: Optional[str] = None
     created_at: datetime
+    genres: List[GenreSchema] = []
     
     model_config = ConfigDict(from_attributes=True)
 

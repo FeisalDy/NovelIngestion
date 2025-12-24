@@ -124,8 +124,9 @@ async def list_novels(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    List all novels with pagination.
+    List all novel series with pagination.
     
+    Novels are multi-chapter works. For standalone one-shot stories, see /chapters endpoint.
     Optionally filter by search term or genre.
     """
     # Base query
@@ -282,6 +283,79 @@ async def get_chapter(
     
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    return ChapterDetail.model_validate(chapter)
+
+
+@app.get("/chapters", response_model=ChapterListResponse, tags=["Chapters"])
+async def list_one_shot_chapters(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None, description="Search in title"),
+    genre: Optional[str] = Query(None, description="Filter by genre slug"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List standalone one-shot chapters (not part of a series).
+    
+    This endpoint returns chapters that are independent stories.
+    Supports filtering by search term and genre.
+    """
+    # Base query for one-shot chapters
+    query = select(Chapter).options(selectinload(Chapter.genres)).where(Chapter.is_one_shot == True)
+    
+    # Apply search filter
+    if search:
+        search_term = f"%{search}%"
+        query = query.where(Chapter.title.ilike(search_term))
+    
+    # Apply genre filter
+    if genre:
+        query = query.join(Chapter.genres).where(Genre.slug == genre)
+    
+    # Get total count
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+    
+    # Apply pagination
+    offset = (page - 1) * page_size
+    query = query.order_by(Chapter.created_at.desc()).offset(offset).limit(page_size)
+    
+    # Execute query
+    result = await db.execute(query)
+    chapters = result.scalars().all()
+    
+    # Calculate total pages
+    total_pages = (total + page_size - 1) // page_size
+    
+    return ChapterListResponse(
+        items=[ChapterListItem.model_validate(c) for c in chapters],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages
+    )
+
+
+@app.get("/chapters/{slug}", response_model=ChapterDetail, tags=["Chapters"])
+async def get_one_shot_chapter(
+    slug: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get a standalone one-shot chapter by its slug."""
+    chapter_result = await db.execute(
+        select(Chapter)
+        .options(selectinload(Chapter.genres))
+        .where(
+            Chapter.slug == slug,
+            Chapter.is_one_shot == True
+        )
+    )
+    chapter = chapter_result.scalar_one_or_none()
+    
+    if not chapter:
+        raise HTTPException(status_code=404, detail="One-shot chapter not found")
     
     return ChapterDetail.model_validate(chapter)
 
