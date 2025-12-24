@@ -299,4 +299,17 @@ class PixivSpider(BaseSpider):
         return {
             "Accept": "application/json",
             "Referer": self.source_url,
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+            "cookie": (
+                "first_visit_datetime_pc=2025-12-24%2012%3A19%3A09; "
+                "cc1=2025-12-24%2012%3A19%3A09; p_ab_id=6; p_ab_id_2=2; "
+                "p_ab_d_id=1884895192; yuid_b=GGWYZkQ; "
+                "PHPSESSID=32084762_5vdgGsuFtMw7cmRQOstcSiUoNROIo2j4; "
+                "device_token=e9e449acc98b4300ccdc7eb53d40a705; "
+                "privacy_policy_agreement=7; c_type=25; "
+                "privacy_policy_notification=0; a_type=0; b_type=1; "
+                "_cfuvid=MR1vWwxWPyWsFFyKd.pjQLAE0KI0NtNd5ojb2NIoZ1o-1766546732008-0.0.1.1-604800000; "
+                "__cf_bm=bXgp2C0VbdbXUia_uuwIgar1AmrjIFrx1jNbfHU0MEw-1766565693-1.0.1.1-qc3qvFvzoNVYhuSqT3j7daugFPkwIgfeGUKrHIytMxQFcZ2bIyr7n6ClddeETcWnr2bMjBUKQ1Ty_nRCFinGl_GDVY3AF2fFyMH_IfJAB5ceW8F1zsJKSxGcgg3J5F2N; "
+                "cf_clearance=uIVtNTjo3EIQIhtx87Ls7_1Ip0c3sdBvietOvMcDHt0-1766565836-1.2.1.1-DvgIZjXkktZZ3d5GJXqw5bjkH6nLDfrRQ7OeWZ4iDSG3gEP_DvPPZjCFzBHLpGxLXZP4vTm45oUrk3EwVlpbKcSydetGCs8jg_45waXRDtdi3p9MjdztL4mT6OTCtx4p3SDgYQc1UZJnjR9975ajIxsQ8TwDt7PfqwkiNM_xB1C1rIs37FWMxH2vRQBmQBYGhbx19ASfNs7A0t4kxDpB5My9wYyTPCjpgxd7daS2E8o"
+            )
         }
