@@ -70,8 +70,10 @@ class CrawlerRunner:
     Handles spider execution for ingestion jobs.
     """
 
-    def __init__(self, scrapy_project_path: str = "./crawler"):
-        self.scrapy_project_path = scrapy_project_path
+    def __init__(self, scrapy_project_path: str = None):
+        # scrapy_project_path is deprecated, kept for backward compatibility
+        # Always run from project root
+        self.scrapy_project_path = None
 
     def run_spider(self, spider_name: str, url: str, job_id: int) -> bool:
         """
@@ -85,10 +87,12 @@ class CrawlerRunner:
         Returns:
             True if successful, False otherwise
         """
-        logger.info(f"Running spider '{spider_name}' for job {job_id}")
+        logger.info(f"=== Starting spider '{spider_name}' for job {job_id} ===")
+        logger.info(f"Target URL: {url}")
 
         try:
             # Update job status to 'crawling'
+            logger.info(f"Updating job {job_id} status to CRAWLING")
             self._update_job_status(job_id, IngestionStatus.CRAWLING)
 
             # Build scrapy command
@@ -98,23 +102,65 @@ class CrawlerRunner:
                 '-a', f'job_id={job_id}',
             ]
 
-            # Run scrapy in subprocess
+            logger.info(f"Executing command: {' '.join(command)}")
+            logger.info("Starting scrapy subprocess...")
+            
+            # Run scrapy in subprocess from project root (not from crawler subdir)
+            # This ensures that the imports in pipelines.py work correctly
             result = subprocess.run(
                 command,
-                cwd=self.scrapy_project_path,
                 capture_output=True,
                 text=True,
                 timeout=3600,  # 1 hour timeout
             )
 
+            logger.info(f"Scrapy process completed with return code: {result.returncode}")
+            
+            # Log stdout if present
+            if result.stdout:
+                logger.info(f"=== Scrapy Output (stdout) ===")
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        logger.info(f"  {line}")
+            
+            # Log stderr if present
+            if result.stderr:
+                logger.warning(f"=== Scrapy Warnings/Errors (stderr) ===")
+                for line in result.stderr.strip().split('\n'):
+                    if line.strip():
+                        logger.warning(f"  {line}")
+
             if result.returncode == 0:
-                # self._update_job_status(job_id, IngestionStatus.DONE)
-                logger.info(f"Spider completed successfully for job {job_id}")
-                return True
+                # Check if there were spider errors/exceptions in stderr
+                has_errors = any([
+                    'spider_exceptions' in result.stderr.lower(),
+                    'error' in result.stderr.lower() and 'spider error' in result.stderr.lower(),
+                    'no valid novel data collected' in result.stderr.lower(),
+                    'log_count/error' in result.stderr.lower()
+                ])
+                
+                if has_errors:
+                    logger.error(f"=== Spider completed with ERRORS for job {job_id} ===")
+                    logger.error("Detected errors in spider output despite return code 0")
+                    
+                    # Extract error message from stderr
+                    error_lines = [line for line in result.stderr.split('\n') if 'ERROR' in line]
+                    error_message = '\n'.join(error_lines[:5]) if error_lines else result.stderr[:1000]
+                    
+                    self._update_job_status(
+                        job_id,
+                        IngestionStatus.ERROR,
+                        error_message=error_message
+                    )
+                    return False
+                else:
+                    # self._update_job_status(job_id, IngestionStatus.DONE)
+                    logger.info(f"=== Spider completed successfully for job {job_id} ===")
+                    return True
             else:
-                logger.error(f"Spider failed for job {job_id}")
-                logger.error(f"stdout: {result.stdout}")
-                logger.error(f"stderr: {result.stderr}")
+                logger.error(f"=== Spider failed for job {job_id} with return code {result.returncode} ===")
+                logger.error(f"Full stdout: {result.stdout[:2000]}")
+                logger.error(f"Full stderr: {result.stderr[:2000]}")
 
                 self._update_job_status(
                     job_id,
@@ -123,21 +169,30 @@ class CrawlerRunner:
                 )
                 return False
 
-        except subprocess.TimeoutExpired:
-            logger.error(f"Spider timeout for job {job_id}")
+        except subprocess.TimeoutExpired as e:
+            logger.error(f"=== Spider TIMEOUT for job {job_id} ===")
+            logger.error(f"Timeout occurred after 3600 seconds")
+            if hasattr(e, 'stdout') and e.stdout:
+                logger.error(f"Partial stdout: {e.stdout[:1000]}")
+            if hasattr(e, 'stderr') and e.stderr:
+                logger.error(f"Partial stderr: {e.stderr[:1000]}")
             self._update_job_status(
                 job_id,
                 IngestionStatus.ERROR,
-                error_message="Spider execution timed out"
+                error_message="Spider execution timed out after 1 hour"
             )
             return False
 
         except Exception as e:
-            logger.error(f"Spider execution error for job {job_id}: {e}")
+            logger.error(f"=== Spider EXCEPTION for job {job_id} ===")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.error(f"Exception message: {e}")
+            import traceback
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
             self._update_job_status(
                 job_id,
                 IngestionStatus.ERROR,
-                error_message=str(e)
+                error_message=str(e)[:1000]
             )
             return False
 
@@ -262,48 +317,70 @@ def process_job(job_id: int):
     Args:
         job_id: ID of the ingestion job to process
     """
-    logger.info(f"Worker processing job {job_id}")
+    logger.info(f"="*60)
+    logger.info(f"WORKER: Starting to process job {job_id}")
+    logger.info(f"="*60)
 
     db = SessionLocal()
     try:
         job = db.query(IngestionJob).filter_by(id=job_id).first()
 
         if not job:
-            logger.error(f"Job {job_id} not found")
+            logger.error(f"WORKER: Job {job_id} not found in database")
             return False
+        
+        logger.info(f"WORKER: Job {job_id} details:")
+        logger.info(f"  - URL: {job.source_url}")
+        logger.info(f"  - Current status: {job.status}")
+        logger.info(f"  - Retry count: {job.retry_count}")
 
         # Get spider name
         spider_name = SpiderRegistry.get_spider_for_url(job.source_url)
 
         if not spider_name:
-            logger.error(f"No spider for URL: {job.source_url}")
+            logger.error(f"WORKER: No spider registered for URL: {job.source_url}")
             return False
+        
+        logger.info(f"WORKER: Selected spider '{spider_name}' for this job")
 
         # Create crawler runner and execute
         crawler_runner = CrawlerRunner(settings.scrapy_project_path)
+        logger.info(f"WORKER: Starting crawler execution...")
+        
         success = crawler_runner.run_spider(
             spider_name,
             job.source_url,
             job_id
         )
 
-        logger.info(f"Job {job_id} processing completed: {success}")
+        logger.info(f"="*60)
+        logger.info(f"WORKER: Job {job_id} processing completed: {'SUCCESS' if success else 'FAILED'}")
+        logger.info(f"="*60)
         return success
 
     except Exception as e:
-        logger.error(f"Error processing job {job_id}: {e}")
+        logger.error(f"="*60)
+        logger.error(f"WORKER: FATAL ERROR processing job {job_id}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        logger.error(f"Exception message: {e}")
+        import traceback
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        logger.error(f"="*60)
 
         # Update job status to ERROR
         try:
             job = db.query(IngestionJob).filter_by(id=job_id).first()
             if job:
+                logger.info(f"WORKER: Updating job {job_id} status to ERROR")
                 job.status = IngestionStatus.ERROR
-                job.error_message = str(e)
+                job.error_message = str(e)[:1000]
                 db.commit()
-        except:
-            pass
+                logger.info(f"WORKER: Job status updated successfully")
+        except Exception as update_error:
+            logger.error(f"WORKER: Failed to update job status: {update_error}")
 
         return False
 
     finally:
         db.close()
+        logger.info(f"WORKER: Database connection closed for job {job_id}")

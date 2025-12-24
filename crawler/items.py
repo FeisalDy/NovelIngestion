@@ -6,10 +6,11 @@ class ChapterItem(scrapy.Item):
     """Item representing a single chapter."""
     chapter_number = scrapy.Field()
     chapter_title = scrapy.Field()
-    chapter_url = scrapy.Field()
+    source_url = scrapy.Field()
     content = scrapy.Field()  # Raw HTML content
     clean_content = scrapy.Field()  # optional, for pipeline
     word_count = scrapy.Field()  # optional, for pipeline
+    genres = scrapy.Field()  # List of genre strings
 
 
 class NovelItem(scrapy.Item):
@@ -21,3 +22,4 @@ class NovelItem(scrapy.Item):
     genres = scrapy.Field()  # List of genre strings
     chapters = scrapy.Field()  # List of ChapterItem dictionaries
     ingestion_job_id = scrapy.Field()  # Track which job this belongs to
+    is_one_shot = scrapy.Field()  # Boolean flag for one-shots

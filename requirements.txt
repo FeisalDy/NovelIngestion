@@ -29,6 +29,7 @@ rq==1.16.1
 python-slugify==8.0.1
 python-multipart==0.0.6
 httpx==0.26.0
+requests>=2.31.0
 
 # Development
 pytest==7.4.4
