@@ -2,6 +2,8 @@
 import scrapy
 from abc import abstractmethod
 from typing import Iterator, Optional
+from scrapy import signals
+from scrapy.exceptions import DontCloseSpider
 from crawler.items import NovelItem, ChapterItem
 
 
@@ -32,6 +34,14 @@ class BaseSpider(scrapy.Spider):
         self.novel_item['ingestion_job_id'] = job_id
         self.novel_item['source_url'] = url
         self.novel_item['chapters'] = []
+        self._item_yielded = False
+    
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        """Connect signals."""
+        spider = super(BaseSpider, cls).from_crawler(crawler, *args, **kwargs)
+        crawler.signals.connect(spider.spider_idle, signal=signals.spider_idle)
+        return spider
         
     def parse(self, response):
         """
@@ -122,18 +132,49 @@ class BaseSpider(scrapy.Spider):
         chapter_num = failure.request.meta.get('chapter_number', 'unknown')
         self.logger.warning(f"Skipping chapter {chapter_num} due to error")
     
-    def closed(self, reason):
+    def spider_idle(self, spider):
         """
-        Called when spider closes.
+        Called when spider becomes idle (no more requests to process).
         
-        Yield the complete novel item with all chapters.
+        This is where we yield the final novel item with all chapters.
         """
-        self.logger.info(f"Spider closing: {reason}")
-        self.logger.info(f"Collected {len(self.novel_item.get('chapters', []))} chapters")
+        # Only yield once
+        if self._item_yielded:
+            return
+            
+        self.logger.info(f"=== Spider idle - all chapters collected ===")
+        self.logger.info(f"Total chapters collected: {len(self.novel_item.get('chapters', []))}")
         
-        # Only yield if we have data
+        # Validate we have complete data
         if self.novel_item.get('title') and self.novel_item.get('chapters'):
-            return self.novel_item
+            self.logger.info(f"✓ Yielding novel item to pipelines:")
+            self.logger.info(f"  - Title: {self.novel_item['title']}")
+            self.logger.info(f"  - Chapters: {len(self.novel_item['chapters'])}")
+            self.logger.info(f"  - Job ID: {self.novel_item['ingestion_job_id']}")
+            
+            # Yield the item through the crawler engine
+            self.crawler.engine.crawl(
+                scrapy.Request(
+                    url=self.source_url,
+                    callback=self._yield_novel_item,
+                    dont_filter=True,
+                    priority=1000  # High priority to process immediately
+                ),
+                self
+            )
+            self._item_yielded = True
+            raise DontCloseSpider()  # Keep spider alive to process the yielding request
         else:
-            self.logger.error("No valid novel data collected")
-            return None
+            self.logger.error("✗ No valid novel data collected - not yielding to pipelines")
+            self.logger.error(f"  - Has title: {bool(self.novel_item.get('title'))}")
+            self.logger.error(f"  - Chapter count: {len(self.novel_item.get('chapters', []))}")
+    
+    def _yield_novel_item(self, response):
+        """Helper callback to yield the novel item."""
+        self.logger.info("=== Yielding novel item to pipeline ===")
+        yield self.novel_item
+    
+    def closed(self, reason):
+        """Called when spider closes."""
+        self.logger.info(f"Spider closed: {reason}")
+        self.logger.info(f"Final chapter count: {len(self.novel_item.get('chapters', []))}")

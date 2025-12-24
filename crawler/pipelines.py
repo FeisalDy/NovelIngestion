@@ -18,6 +18,13 @@ class ValidationPipeline:
 
     def process_item(self, item, spider):
         """Validate that required fields are present."""
+        logger.info(f"=== VALIDATION PIPELINE START ===")
+        logger.info(f"Item keys: {list(item.keys())}")
+        logger.info(f"Title: {item.get('title', 'N/A')}")
+        logger.info(f"Source URL: {item.get('source_url', 'N/A')}")
+        logger.info(f"Is one-shot: {item.get('is_one_shot', False)}")
+        logger.info(f"Number of chapters: {len(item.get('chapters', []))}")
+        
         required_fields = ['title', 'source_url']
 
         for field in required_fields:
@@ -40,6 +47,7 @@ class ValidationPipeline:
                 raise ValueError("Novel series must have at least one chapter")
 
         logger.info(f"Validation passed for: {item['title']} (one_shot={is_one_shot})")
+        logger.info(f"=== VALIDATION PIPELINE END - PASSED ===")
         return item
 
 
@@ -51,6 +59,7 @@ class NormalizationPipeline:
 
     def process_item(self, item, spider):
         """Clean and normalize all content."""
+        logger.info(f"=== NORMALIZATION PIPELINE START ===")
         logger.info(f"Normalizing content for: {item['title']}")
 
         # Generate slug
@@ -111,6 +120,7 @@ class NormalizationPipeline:
             f"{len(chapters)} chapters, "
             f"{total_words} words (one_shot={is_one_shot})"
         )
+        logger.info(f"=== NORMALIZATION PIPELINE END - SUCCESS ===")
 
         return item
 
@@ -141,63 +151,100 @@ class DatabasePipeline:
 
     def process_item(self, item, spider):
         """Save item to database."""
+        logger.info(f"=== DATABASE PIPELINE START ===")
+        logger.info(f"Attempting to save: {item.get('title', 'N/A')}")
+        logger.info(f"Job ID: {item.get('ingestion_job_id', 'N/A')}")
+        logger.info(f"Database session active: {self.db is not None}")
+        
         try:
             is_one_shot = item.get('is_one_shot', False)
 
             # TODO handle on shot differently
             if is_one_shot:
-                logger.info(f"Saving one-shot chapter: {item['title']}")
+                logger.info(f"Processing as ONE-SHOT chapter: {item['title']}")
                 self._save_one_shot_chapter(item)
             else:
-                logger.info(f"Saving novel series: {item['title']}")
+                logger.info(f"Processing as NOVEL SERIES: {item['title']}")
 
                 # Update job status to 'saving'
                 job_id = item.get('ingestion_job_id')
+                logger.info(f"Job ID for status update: {job_id}")
                 if job_id:
+                    logger.info(f"Updating job {job_id} status to SAVING")
                     self._update_job_status(job_id, IngestionStatus.SAVING)
+                else:
+                    logger.warning("No job_id provided in item")
 
                 # Check if novel already exists
+                logger.info(f"Checking if novel exists: {item['source_url']}")
                 existing_novel = self.db.query(Novel).filter_by(
                     source_url=item['source_url']
                 ).first()
 
                 if existing_novel:
-                    logger.info(f"Updating existing novel: {existing_novel.id}")
+                    logger.info(f"FOUND existing novel with ID: {existing_novel.id}")
                     novel = self._update_novel(existing_novel, item)
+                    logger.info(f"Novel updated successfully")
                 else:
-                    logger.info("Creating new novel")
+                    logger.info("Novel NOT found - creating new novel")
                     novel = self._create_novel(item)
+                    logger.info(f"New novel created with ID: {novel.id}")
 
                 # Handle genres
+                logger.info(f"Attaching {len(item['normalized_genres'])} genres to novel")
                 self._attach_genres(novel, item['normalized_genres'])
+                logger.info(f"Genres attached successfully")
 
                 # Save chapters
+                logger.info(f"Saving {len(item['chapters'])} chapters")
                 self._save_chapters(novel, item['chapters'])
+                logger.info(f"All chapters saved successfully")
 
                 # Commit transaction
+                logger.info("Committing database transaction...")
                 self.db.commit()
+                logger.info("Database transaction committed successfully")
 
                 # Update job status to 'done'
                 if job_id:
+                    logger.info(f"Updating job {job_id} status to DONE")
                     self._update_job_status(job_id, IngestionStatus.DONE)
+                    logger.info(f"Job {job_id} marked as DONE")
 
-                logger.info(f"Successfully saved novel: {novel.id}")
+                logger.info(f"✓ Successfully saved novel: {novel.id}")
+                logger.info(f"=== DATABASE PIPELINE END - SUCCESS ===")
 
             return item
 
         except Exception as e:
+            logger.error(f"=== DATABASE PIPELINE ERROR ===")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.error(f"Exception message: {e}")
+            import traceback
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            logger.error(f"Item being processed: {item.get('title', 'N/A')}")
+            
+            logger.info("Rolling back database transaction...")
             self.db.rollback()
-            logger.error(f"Database error: {e}")
+            logger.info("Rollback completed")
 
             # Update job status to 'error'
             job_id = item.get('ingestion_job_id')
+            logger.info(f"Attempting to update job status to ERROR for job_id: {job_id}")
             if job_id:
-                self._update_job_status(
-                    job_id,
-                    IngestionStatus.ERROR,
-                    error_message=str(e)
-                )
+                try:
+                    self._update_job_status(
+                        job_id,
+                        IngestionStatus.ERROR,
+                        error_message=str(e)
+                    )
+                    logger.info(f"Successfully updated job {job_id} to ERROR status")
+                except Exception as update_error:
+                    logger.error(f"Failed to update job status: {update_error}")
+            else:
+                logger.warning("No job_id available to update status")
 
+            logger.error(f"=== DATABASE PIPELINE END - FAILED ===")
             raise
 
     def _create_novel(self, item) -> Novel:
